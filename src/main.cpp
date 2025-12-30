@@ -1,6 +1,6 @@
+#include <arpa/inet.h>
 #include <bot.hpp>
 #include <iostream>
-#include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 
@@ -20,5 +20,15 @@ int main() {
         std::cout << "SUCCESS: Callback success\n";
     }
 
+    std::cout << "INFO: Starting Listener\n";
+    res = b.start_listener();
+    if (res == -1) {
+        std::cout << "FAIL: Failed to start listener\n";
+        return -1;
+    } else {
+        std::cout << "SUCCESS: Listener Started\n";
+    }
+
+    b.stop_listener();
     return 0;
 }
