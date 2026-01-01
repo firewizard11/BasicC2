@@ -1,26 +1,43 @@
-#include <thread>
 #pragma once
+#include <netinet/in.h>
+#include <queue>
+#include <string>
+#include <thread>
+#include <mutex>
+using namespace std;
+
+struct Connection {
+    int fd;
+    sockaddr_in addr;
+};
 
 class TCPListener {
   public:
-    TCPListener();
+    TCPListener(string ip, int port, int backlog);
     ~TCPListener();
 
+    string get_ip();
     int get_port();
 
-    int start_listener(); // Starts the listener (Creates and backgrounds the listener)
-    int stop_listener();  // Stops the listener thread and closes listener fd
-    void accept_loop();
+    bool start();
+    bool stop();
+    bool has_connection();
+    Connection get_connection();
 
   private:
-    int m_listener_port;           // The Port for the Listener
-    int m_listener;                // Listener Fd
-    std::thread m_listener_thread; // The background thread for the listener
-    bool m_running;                // Is the thread running
-    
-    bool is_running();             // Checks if the thread is running
-    bool is_listening();       // Checks if the listener fd is present
-    
-    int background_listener(); // Creates a background thread for the listener to run on
-    int create_listener();     // Creates the listener fd
+    bool is_listening();
+    bool open_listener();
+    bool close_listener();
+    bool start_accepting();
+    void accept_loop();
+    bool add_connection(Connection conn);
+
+    int m_sockfd;
+    thread m_thread;
+    bool m_accepting;
+    queue<Connection> m_conns;
+    mutex m_conns_mutex;
+    string m_ip;
+    int m_port;
+    int m_backlog;
 };

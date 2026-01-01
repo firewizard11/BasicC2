@@ -1,128 +1,156 @@
 #include "TCPListener.hpp"
-#include <iostream>
+#include <arpa/inet.h>
 #include <netinet/in.h>
-#include <random>
+#include <queue>
+#include <string>
 #include <sys/socket.h>
+#include <system_error>
 #include <thread>
 #include <unistd.h>
+#include <mutex>
 
-TCPListener::TCPListener() {
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_int_distribution<int> distrib(30000, 50000);
+using namespace std;
 
-    m_listener = -1;
-    m_listener_port = distrib(gen);
-    m_running = false;
+TCPListener::TCPListener(string ip, int port, int backlog) {
+    m_ip = ip;
+    m_port = port;
+    m_backlog = backlog;
+    m_sockfd = -1;
+    m_accepting = false;
 }
 
 TCPListener::~TCPListener() {
-    stop_listener();
+    stop();
+}
 
-    if (m_listener_thread.joinable()) {
-        m_listener_thread.join();
-    }
+string TCPListener::get_ip() {
+    return m_ip;
 }
 
 int TCPListener::get_port() {
-    return m_listener_port;
+    return m_port;
 }
 
-int TCPListener::start_listener() {
-    int res;
-
-    std::cout << "INFO: Creating Listener on " << m_listener_port << "\n";
-    res = create_listener();
-    if (res == -1) {
-        std::cout << "FAIL: Failed to create listener\n";
-        stop_listener();
-        return -1;
-    }
-    std::cout << "SUCCESS: Created listener\n";
-    m_listener = res;
-
-    std::cout << "INFO: Starting accept loop\n";
-    res = background_listener();
-    if (res == -1) {
-        std::cout << "FAIL: Failed to background thread\n";
-        stop_listener();
-        return -1;
+bool TCPListener::start() {
+    bool res;
+    res = open_listener();
+    if (!res) {
+        return false;
     }
 
-    std::cout << "SUCCESS: Backgrounded thread\n";
-    return 0;
+    res = start_accepting();
+    if (!res) {
+        return false;
+    }
+
+    return true;
 }
 
-int TCPListener::stop_listener() {
+bool TCPListener::stop() {
+    m_accepting = false;
+    close_listener();
+    if (m_thread.joinable()) {
+        m_thread.join();
+    }
 
+    return true;
+}
+
+bool TCPListener::has_connection() {
+    bool res;
+    lock_guard<mutex> guard(m_conns_mutex);
+    res = m_conns.empty();
+    return res;
+}
+
+Connection TCPListener::get_connection() {
+    Connection c;
+    if (!has_connection()) {
+        c.fd = -1;
+        return c;
+    }
+
+    lock_guard<mutex> guard(m_conns_mutex);
+    c = m_conns.front();
+    m_conns.pop();
+    return c;
+}
+
+bool TCPListener::is_listening() {
+    return m_sockfd > -1;
+}
+
+bool TCPListener::open_listener() {
     if (is_listening()) {
-        close(m_listener);
+        return false;
     }
-
-    if (is_running()) {
-        m_running = false;
-    }
-
-    return 0;
-}
-
-int TCPListener::background_listener() {
-    try {
-        m_listener_thread = std::thread(&TCPListener::accept_loop, this);
-    } catch (const std::system_error &e) {
-        std::cout << "EXCEPTION: " << e.what() << "\n";
-        return -1;
-    }
-
-    return 0;
-}
-
-int TCPListener::create_listener() {
     int res;
-    int lfd;
-    sockaddr_in laddr;
-    laddr.sin_family = AF_INET;
-    laddr.sin_addr.s_addr = INADDR_ANY;
-    laddr.sin_port = htons(m_listener_port);
-
-    res = socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(m_port);
+    inet_aton(m_ip.c_str(), &addr.sin_addr);
+    res = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
     if (res == -1) {
-        return -1;
+        return false;
     }
-    lfd = res;
+    m_sockfd = res;
 
-    res = bind(lfd, (sockaddr *)&laddr, (socklen_t)sizeof(laddr));
+    res = bind(m_sockfd, (const sockaddr *)&addr, (socklen_t)sizeof(addr));
     if (res == -1) {
-        close(lfd);
-        return -1;
+        close_listener();
+        return false;
     }
 
-    res = listen(lfd, 5);
+    res = listen(m_sockfd, m_backlog);
     if (res == -1) {
-        close(lfd);
-        return -1;
+        close_listener();
+        return false;
     }
-
-    return lfd;
+    return true;
 }
 
-bool TCPListener::is_listening() { return m_listener > -1; }
+bool TCPListener::close_listener() {
+    if (!is_listening()) {
+        return false;
+    }
+    close(m_sockfd);
+    m_sockfd = -1;
+    return true;
+}
 
-bool TCPListener::is_running() { return m_running; }
+bool TCPListener::start_accepting() {
+    try {
+        m_accepting = true;
+        m_thread = thread(&TCPListener::accept_loop, this);
+    } catch (system_error &e) {
+        m_accepting = false;
+        close_listener();
+        return false;
+    }
+
+    return true;
+}
 
 void TCPListener::accept_loop() {
-    if (!is_listening()) {
-        return;
-    }
     int res;
-    m_running = true;
     sockaddr_in addr;
-    socklen_t addr_len = sizeof(addr);
+    socklen_t len;
+    Connection c;
 
-    while (m_running) {
-        res = accept(m_listener, (sockaddr *)&addr, &addr_len);
+    while (m_accepting) {
+        res = accept(m_sockfd, (sockaddr *)&addr, &len);
         if (res == -1) {
             continue;
         }
+
+        c.fd = res;
+        c.addr = addr;
+        add_connection(c);
     }
+}
+
+bool TCPListener::add_connection(Connection conn) {
+    lock_guard<mutex> guard(m_conns_mutex);
+    m_conns.push(conn);
+    return true;
 }
